@@ -8,7 +8,7 @@ ptpython
 
 ## picking specific versions of deps for Salt which issues >=2.18
 pycparser==2.17
-jinja2==2.10.1
+jinja2==2.11.3
 packaging
 wheel
 markupsafe==1.1.1
