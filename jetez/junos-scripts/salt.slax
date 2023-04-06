@@ -1,0 +1,44 @@
+/*  Copyright 2019-2022 VMware, Inc.
+*   SPDX-License-Identifier: Apache-2
+*/
+
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+match configuration {
+    /* Execute during bootup */
+    if ($junos-context/commit-context/commit-boot) {
+        /* Get show version detail and get configuration */
+        var $package = jcs:invoke("get-software-information");
+        expr jcs:trace("At bootup time");
+        if($package/package-information[name == "salt-junos"])
+        {
+            expr jcs:trace("The package is available");
+        } else {
+            expr jcs:trace("The package is not available");
+            var $configuration = jcs:invoke("get-configuration");
+            if($configuration/system/extensions/extension-service) {
+                expr jcs:trace("Deactivating package...");
+                <change> {
+                    <system> {
+                        <extensions> {
+                           <extension-service inactive="inactive">;
+                         }
+                      }
+                }
+            }
+            if($configuration/event-options/policy[name == "SALT_POLICY"][@inactive]) {
+               expr jcs:trace("Activate event-option");
+                <change> {
+                   <event-options> {
+                       <policy active = "active"> {
+                             <name>"SALT_POLICY";
+                       }
+                   }
+                }
+             }
+         }
+     }
+}

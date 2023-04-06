@@ -1,0 +1,12 @@
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+files:
+- source: ../junos-scripts/salt.slax
+  destination: /var/db/scripts/commit/salt.slax
+- source: ../junos-scripts/salt_event.py
+  destination: /var/db/scripts/event/salt_event.py
+- source: ../junos-scripts/salt_dualrengine.slax
+  destination: /var/db/scripts/op/salt_dualrengine.slax
+- source: ../junos-scripts/salt_log.slax
+  destination: /var/db/scripts/event/salt_log.slax

@@ -1,0 +1,22 @@
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+master: 127.0.0.1
+
+log_level: debug
+
+proxy:
+  proxytype: junos
+  host: localhost
+
+beacon:
+  beacons:
+    junos_rre_keys:
+      - interval:
+          43200
+
+ping_interval: 2
+
+loop_interval: 1
+
+enable_fqdns_grains: False

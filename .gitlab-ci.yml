@@ -1,0 +1,403 @@
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+
+---
+stages:
+  - build_pkg_tgz
+#  - test_tgz
+
+##  building trial version of CI here which should eventually move to utilize
+## ci-templates.  Trying here first allows for issues to be worked out without
+## having to handle two different branches
+
+variables:
+  PLUGIN_PACKAGES: "*.tgz"
+  CICD_UPSTREAM_PATH: "saltstack/open/salt-native-minion-juniper"
+  CICD_SALT_VERSION:  "3000"
+  CICD_SALT_RELEASE:  "1"
+  CICD_SALT_DATE: "Thu Jan 1 1970"
+  CICD_SALT_LOCATION: "salt"
+  CICD_SALT_DEV_BRANCH: "master"
+  CICD_PYTHON_VER: "3.9.5"  #latest 3.9 version available on system for builds
+  ## CICD_PYTHON_VER: "3.7.10"
+  CICD_NIGHTLY_BLD: "1"
+
+workflow:
+  rules:
+    - if: $CI_MERGE_REQUEST_ID == null
+
+default:
+  before_script:
+    - mkdir /root/ || true
+    - echo "machine gitlab.com login gitlab-ci-token password ${CI_JOB_TOKEN}" >> ~/.netrc
+
+
+## Build Juniper Native Minion - JUNOS
+##
+## Have to pull the version of salt that is being installed from that located in
+## CICD_SALT_LOCATION which depending on the nature of the build or development
+## can be of the following forms:
+##
+##  salt        - regular install from PyPI
+##  git+https://github.com/saltstack/salt#egg=salt
+##  git+https://github.com/dmurphy18/salt@v3000.4.arista#egg=salt
+##  git+ssh://git@github.com/dmurphy18/salt-cve@v3001.2#egg=salt
+
+build-junos:
+  stage: build_pkg_tgz
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+    paths:
+      - "*.tgz"
+    expire_in: 120 days
+    reports:
+      dotenv: build.env
+  image: saltstack/cicd/ec2-amis/uncured/freebsd/10.2/*
+  tags:
+    - ss-custom-ec2-linux
+  variables:
+    WINDOWS_GUEST: "false"
+    INSTANCE_TYPE: "t2.xlarge"
+  parallel:
+    matrix:
+      - IMAGE_USER: root
+        VERSION:
+          - "10.2"
+  script:
+    - oldpwd=$(pwd)
+    - date
+    - ntpdate -u -s time.nist.gov
+    - date
+    - find . -name "salt-junos-x86-64-*.tgz" | xargs rm -f
+    - export PATH="/root/.pyenv/plugins/pyenv-virtualenv/shims:/root/.pyenv/shims:/root/.pyenv/bin:/usr/local/bin:$PATH"
+    - echo $PATH
+    ## - which pyenv
+    ## - pyenv --version
+    ## - pyenv install --list
+    - echo "desired Python version ${CICD_PYTHON_VER}"
+    ## need to re-install python ${CICD_PYTHON_VER} to get shared support, base machine version doesn't have shared
+    - env PYTHON_CONFIGURE_OPTS="--enable-shared --enable-ipv6" pyenv install -f ${CICD_PYTHON_VER}
+    - pyenv global ${CICD_PYTHON_VER}
+    ## fix for pyenv issue, see https://github.com/pyenv/pyenv/issues/1504
+    - export LD_LIBRARY_PATH=/root/.pyenv/versions/${CICD_PYTHON_VER}/lib:$LD_LIBRARY_PATH
+    - rm -fR ${oldpwd}/dist
+    - rm -fR ${oldpwd}/build
+    - mkdir ${oldpwd}/dist
+    - mkdir ${oldpwd}/build
+    ## attempt to work around cffi 1.14.4 issue with gcc pragma, by having 1.14.3 in cache
+    - python3 -m pip install pop-config==8.0.2
+    - python3 -m pip install cffi==1.14.3
+    - python3 -m pip install --upgrade tiamat==7.10.7
+    - pyenv rehash && hash -r
+    - python3 -m pip list
+    - export CICD_SALT_DATE=$(date +"%a %b %0d %Y")
+    - if [[ "${CICD_NIGHTLY_BLD}" = "1" ]]; then export CICD_SALT_LOCATION_NB="git+https://github.com/saltstack/salt@$CICD_SALT_DEV_BRANCH#egg=salt"; rm -fR dev_salt; mkdir dev_salt; fi
+    - cd dev_salt
+    - if [[ "${CICD_NIGHTLY_BLD}" = "1" ]]; then git clone -q https://github.com/saltstack/salt.git; fi
+    - cd salt
+    - if [[ "${CICD_NIGHTLY_BLD}" = "1" ]]; then python3 setup.py -q sdist; fi
+    - cd dist
+    - ls -alh
+    - export CICD_SALT_LOCATION_NB=$(pwd)
+    - export CICD_SALT_VERSION=$(ls salt-* | sed s/salt-// | sed s/.tar.gz//)
+    - echo "CICD_SALT_VERSION is '${CICD_SALT_VERSION}'"
+    - cd ${oldpwd}
+    - rm -f juniper_requirements.txt
+    - cp requirements.txt juniper_requirements.txt
+    - CICD_SALT_LOCATION_PATH_FILE="${CICD_SALT_LOCATION_NB}/salt-${CICD_SALT_VERSION}.tar.gz"
+    - echo "CICD_SALT_LOCATION_PATH_FILE is '${CICD_SALT_LOCATION_PATH_FILE}'"
+    - ls -alh "${CICD_SALT_LOCATION_PATH_FILE}"
+    - sed -i -e 's&SALT_LOCATION&'${CICD_SALT_LOCATION_PATH_FILE}'&' juniper_requirements.txt
+    - cat juniper_requirements.txt
+    - export CICD_SALT_VERSION_ADJ=$(echo "$CICD_SALT_VERSION" | sed "s/-/_/"g | sed "s/+/_/"g)
+    - echo "CICD_SALT_VERSION_ADJ is ${CICD_SALT_VERSION_ADJ}"
+    - echo "CICD_SALT_DATE=${CICD_SALT_DATE}" > build.env
+    - echo "CICD_SALT_VERSION=${CICD_SALT_VERSION}" >> build.env
+    - echo "CICD_SALT_VERSION_ADJ=$CICD_SALT_VERSION_ADJ" >> build.env
+    - echo "CICD_SALT_RELEASE=${CICD_SALT_RELEASE}" >> build.env
+    - chflags noschg /lib/libthr.so.3
+    - chmod 755 /lib/libthr.so.3
+    - CONFIGURE_OPTS="--enable-shared --enable-debug" tiamat --log-file "${oldpwd}/tiamat.log" --log-level DEBUG build -c build.conf
+    ## packaging from here
+    - python3 -m pip install -q PyYAML
+    - python3 -m pip install -q lxml
+    - python3 -m pip install -q ruamel.yaml
+    ## install jetez
+    - pip install -q git+https://github.com/Juniper/jetez.git
+    - pyenv rehash && hash -r
+    # work in jetez sub-dir
+    - cd jetez
+    - rm -rf salt-junos*
+    - mkdir -p salt-junos
+    - cp -R ${oldpwd}/dist/run/* salt-junos/
+    - cp junos-scripts/actions.sh salt-junos/
+    # work-arounds ensure executable run is named salt-junos
+    - cp -R ${oldpwd}/dist/run/run salt-junos/salt-junos
+    # these files are causing issue with pkg/manifest
+    # but they were there in pop-build so unsure as to why an issue, contacted Juniper
+    - rm -f salt-junos/setuptools/command/"launcher manifest.xml"
+    - rm -f salt-junos/setuptools/"script (dev).tmpl"
+    - rm -f salt-junos/jaraco/text/"Lorem ipsum.txt"
+    # clean out cache
+    - find . -name "__pycache__" | xargs rm -fR
+    - find . -name "*.pyc" | xargs rm -f
+    - sed -i -e "s/VERSION_TO_BE_REPLACED/$CICD_SALT_VERSION_ADJ/g" build-yaml.py
+    - python3 build-yaml.py
+    - rm -f *.tgz
+    - jetez -j ./salt-junos.yaml --source=./salt-junos -k certs/saltstack-packaging-commercial-1_key.pem -c certs/saltstack-packaging-commercial-1.pem
+    - cd ${oldpwd}
+    - cp jetez/salt-junos*.tgz .
+
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+
+
+build-tags-junos:
+  stage: build_pkg_tgz
+  artifacts:
+    name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+    paths:
+      - "*.tgz"
+    expire_in: 120 days
+    reports:
+      dotenv: build.env
+  image: saltstack/cicd/ec2-amis/uncured/freebsd/10.2/*
+  tags:
+    - ss-custom-ec2-linux
+  variables:
+    WINDOWS_GUEST: "false"
+    INSTANCE_TYPE: "t2.xlarge"
+  parallel:
+    matrix:
+      - IMAGE_USER: root
+        VERSION:
+          - "10.2"
+  script:
+    - oldpwd=$(pwd)
+    - date
+    - ntpdate -u -s time.nist.gov
+    - date
+    - find . -name "salt-junos-x86-64-*.tgz" | xargs rm -f
+    - export PATH="/root/.pyenv/plugins/pyenv-virtualenv/shims:/root/.pyenv/shims:/root/.pyenv/bin:/usr/local/bin:$PATH"
+    ## need to re-install python${CICD_PYTHON_VER}  to get shared support, base machine version doesn't have shared
+    - env PYTHON_CONFIGURE_OPTS="--enable-shared --enable-ipv6" pyenv install -f ${CICD_PYTHON_VER}
+    - pyenv global ${CICD_PYTHON_VER}
+    ## fix for pyenv issue, see https://github.com/pyenv/pyenv/issues/1504
+    - export LD_LIBRARY_PATH=/root/.pyenv/versions/${CICD_PYTHON_VER}/lib:$LD_LIBRARY_PATH
+    - rm -fR ${oldpwd}/dist
+    - rm -fR ${oldpwd}/build
+    - mkdir ${oldpwd}/dist
+    - mkdir ${oldpwd}/build
+    ## attempt to work around cffi 1.14.4 issue with gcc pragma, by having 1.14.3 in cache
+    - python3 -m pip install pop-config==8.0.2
+    - python3 -m pip install cffi==1.14.3
+    - python3 -m pip install --upgrade tiamat==7.10.7
+    - pyenv rehash && hash -r
+    - export CICD_SALT_DATE=$(date +"%a %b %0d %Y")
+    - export CICD_SALT_TAG=$(echo "${CI_COMMIT_TAG}" | cut -d '-' -f 1)
+    - export CICD_SALT_VERSION=$(echo "${CI_COMMIT_TAG}" | sed s/v// | cut -d '-' -f 1)
+    - export CICD_SALT_RELEASE=$(echo "${CI_COMMIT_TAG}" | sed s/v// | cut -d '-' -f 2)
+    ## ensure if no release number given default to 1
+    - if [[ "${CICD_SALT_VERSION}" = "${CICD_SALT_RELEASE}" ]]; then export CICD_SALT_RELEASE=1; fi
+    - export CICD_SALT_LOCATION="git+https://github.com/saltstack/salt@${CICD_SALT_TAG}#egg=salt"
+    - cd ${oldpwd}
+    - rm -f juniper_requirements.txt
+    - cp requirements.txt juniper_requirements.txt
+    - echo "CICD_SALT_LOCATION is ,${CICD_SALT_LOCATION},"
+    - sed -i -e 's&SALT_LOCATION&'${CICD_SALT_LOCATION}'&' juniper_requirements.txt
+    - cat juniper_requirements.txt
+    - echo "${CICD_SALT_TAG}"
+    - echo "CICD_SALT_DATE=${CICD_SALT_DATE}"
+    - echo "CICD_SALT_VERSION=${CICD_SALT_VERSION}"
+    - echo "CICD_SALT_RELEASE=${CICD_SALT_RELEASE}"
+    - echo "CICD_SALT_DATE=${CICD_SALT_DATE}" > build.env
+    - echo "CICD_SALT_VERSION=${CICD_SALT_VERSION}" >> build.env
+    - echo "CICD_SALT_RELEASE=${CICD_SALT_RELEASE}" >> build.env
+    - chflags noschg /lib/libthr.so.3
+    - chmod 755 /lib/libthr.so.3
+    - CONFIGURE_OPTS="--enable-shared --enable-debug" tiamat --log-file "${oldpwd}/tiamat.log" --log-level TRACE build -c build.conf
+    ## packaging from here
+    - python3 -m pip install -q PyYAML
+    - python3 -m pip install -q lxml
+    - python3 -m pip install -q ruamel.yaml
+    - pip install -q git+https://github.com/Juniper/jetez.git
+    - pyenv rehash && hash -r
+    # work in jetez sub-dir
+    - cd jetez
+    - rm -rf salt-junos*
+    - mkdir -p salt-junos
+    - cp -R ${oldpwd}/dist/run/* salt-junos/
+    - cp junos-scripts/actions.sh salt-junos/
+    # work-arounds ensure executable run is named salt-junos
+    - cp -R ${oldpwd}/dist/run/run salt-junos/salt-junos
+    # these files are causing issue with pkg/manifest
+    # but they were there in pop-build so unsure as to why an issue, contacted Juniper
+    - rm -f salt-junos/setuptools/command/"launcher manifest.xml"
+    - rm -f salt-junos/setuptools/"script (dev).tmpl"
+    - rm -f salt-junos/jaraco/text/"Lorem ipsum.txt"
+    # clean out cache
+    - find . -name "__pycache__" | xargs rm -fR
+    - find . -name "*.pyc" | xargs rm -f
+    - sed -i -e "s/VERSION_TO_BE_REPLACED/$CICD_SALT_VERSION/g" build-yaml.py
+    - cat build-yaml.py
+    - python3 build-yaml.py
+    - rm -f *.tgz
+    - jetez -j ./salt-junos.yaml --source=./salt-junos -k certs/saltstack-packaging-commercial-1_key.pem -c certs/saltstack-packaging-commercial-1.pem
+    - cd ${oldpwd}
+    - cp jetez/salt-junos*.tgz .
+
+  rules:
+    - if: "$CI_COMMIT_TAG != null && $CI_PROJECT_PATH == $CICD_UPSTREAM_PATH"
+      when: always
+    - when: never
+
+
+## test-junos_vmx17:
+##   stage: test_tgz
+##   artifacts:
+##     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+##     expire_in: 120 days
+##   tags:
+##     - juniper-vbox
+##   image: junos_vmx17
+##   script:
+##     - oldpwd=$(pwd)
+##     - uname -a
+##     - echo $PATH
+##     ## sanity check
+##     - cli show interfaces terse
+##     ## obtain version and test
+##     - setenv JUNOS_SALT_VERSION `ls salt-junos-x86-64-*.tgz | sed 's/salt-junos-x86-64-//g' | sed 's/.tgz//g'`
+##     - echo "JUNOS_SALT_VERSION is ${JUNOS_SALT_VERSION}"
+##     - cp salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz /var/tmp
+##     - cd /var/tmp
+##     - cli request system software add /var/tmp/salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz
+##     - cp ${oldpwd}/test_proxy_config /var/local/salt/etc/proxy
+##     ## basic unit tests
+##     - cli show version | grep "Salt Minion ${CICD_SALT_VERSION_ADJ} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - cli -c "show version | match salt" | grep "Salt Minion ${CICD_SALT_VERSION_ADJ} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - /var/db/scripts/jet/salt-junos call --local test.versions
+##     - /var/db/scripts/jet/salt-junos call --local grains.items
+##     - /var/db/scripts/jet/salt-junos call --local status.meminfo
+##     - /var/db/scripts/jet/salt-junos call --local status.vmstats
+##     - /var/db/scripts/jet/salt-junos call --local status.cpustats
+##     - /var/db/scripts/jet/salt-junos call --local status.loadavg
+##     - /var/db/scripts/jet/salt-junos call --local test.ping
+##
+##   rules:
+##     - if: $CI_COMMIT_TAG
+##       when: never
+##     - when: on_success
+##
+##
+## test-junos_vmx20:
+##   stage: test_tgz
+##   artifacts:
+##     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+##     expire_in: 120 days
+##   tags:
+##     - juniper-vbox
+##   image: junos_vmx20
+##   script:
+##     - oldpwd=$(pwd)
+##     - uname -a
+##     - echo $PATH
+##     ## sanity check
+##     - cli show interfaces terse
+##     ## obtain version and test
+##     - setenv JUNOS_SALT_VERSION `ls salt-junos-x86-64-*.tgz | sed 's/salt-junos-x86-64-//g' | sed 's/.tgz//g'`
+##     - echo "JUNOS_SALT_VERSION is ${JUNOS_SALT_VERSION}"
+##     - cp salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz /var/tmp
+##     - cd /var/tmp
+##     - cli request system software add /var/tmp/salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz
+##     - cp ${oldpwd}/test_proxy_config /var/local/salt/etc/proxy
+##     ## basic unit tests
+##     - cli show version | grep "Salt Minion ${CICD_SALT_VERSION_ADJ} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - cli -c "show version | match salt" | grep "Salt Minion ${CICD_SALT_VERSION_ADJ} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - /var/db/scripts/jet/salt-junos call --local test.versions
+##     - /var/db/scripts/jet/salt-junos call --local grains.items
+##     - /var/db/scripts/jet/salt-junos call --local status.meminfo
+##     - /var/db/scripts/jet/salt-junos call --local status.vmstats
+##     - /var/db/scripts/jet/salt-junos call --local status.cpustats
+##     - /var/db/scripts/jet/salt-junos call --local status.loadavg
+##     - /var/db/scripts/jet/salt-junos call --local test.ping
+##
+##   rules:
+##     - if: $CI_COMMIT_TAG
+##       when: never
+##     - when: on_success
+##
+##
+## test-tags-junos_vmx17:
+##   stage: test_tgz
+##   artifacts:
+##     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+##     expire_in: 120 days
+##   tags:
+##     - juniper-vbox
+##   image: junos_vmx17
+##   script:
+##     - oldpwd=$(pwd)
+##     - echo $PATH
+##     - cli show interfaces terse
+##     ## obtain version and test
+##     - setenv JUNOS_SALT_VERSION `ls salt-junos-x86-64-*.tgz | sed 's/salt-junos-x86-64-//g' | sed 's/.tgz//g'`
+##     - echo "JUNOS_SALT_VERSION is ${JUNOS_SALT_VERSION}"
+##     - cp salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz /var/tmp
+##     - cd /var/tmp
+##     - cli request system software add /var/tmp/salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz
+##     - cp ${oldpwd}/test_proxy_config /var/local/salt/etc/proxy
+##     ## basic unit tests
+##     - cli show version | grep "Salt Minion ${CICD_SALT_VERSION} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - cli -c "show version | match salt" | grep "Salt Minion ${CICD_SALT_VERSION} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - /var/db/scripts/jet/salt-junos call --local test.versions
+##     - /var/db/scripts/jet/salt-junos call --local grains.items
+##     - /var/db/scripts/jet/salt-junos call --local status.meminfo
+##     - /var/db/scripts/jet/salt-junos call --local status.vmstats
+##     - /var/db/scripts/jet/salt-junos call --local status.cpustats
+##     - /var/db/scripts/jet/salt-junos call --local status.loadavg
+##     - /var/db/scripts/jet/salt-junos call --local test.ping
+##
+##   rules:
+##     - if: "$CI_COMMIT_TAG != null && $CI_PROJECT_PATH == $CICD_UPSTREAM_PATH"
+##       when: always
+##     - when: never
+##
+##
+## test-tags-junos_vmx20:
+##   stage: test_tgz
+##   artifacts:
+##     name: "$CI_JOB_NAME-$CI_COMMIT_REF_NAME"
+##     expire_in: 120 days
+##   tags:
+##     - juniper-vbox
+##   image: junos_vmx20
+##   script:
+##     - oldpwd=$(pwd)
+##     - echo $PATH
+##     - cli show interfaces terse
+##     ## obtain version and test
+##     - setenv JUNOS_SALT_VERSION `ls salt-junos-x86-64-*.tgz | sed 's/salt-junos-x86-64-//g' | sed 's/.tgz//g'`
+##     - echo "JUNOS_SALT_VERSION is ${JUNOS_SALT_VERSION}"
+##     - cp salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz /var/tmp
+##     - cd /var/tmp
+##     - cli request system software add /var/tmp/salt-junos-x86-64-${JUNOS_SALT_VERSION}.tgz
+##     - cp ${oldpwd}/test_proxy_config /var/local/salt/etc/proxy
+##     ## basic unit tests
+##     - cli show version | grep "Salt Minion ${CICD_SALT_VERSION} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - cli -c "show version | match salt" | grep "Salt Minion ${CICD_SALT_VERSION} for JUNOS [${JUNOS_SALT_VERSION}]"
+##     - /var/db/scripts/jet/salt-junos call --local test.versions
+##     - /var/db/scripts/jet/salt-junos call --local grains.items
+##     - /var/db/scripts/jet/salt-junos call --local status.meminfo
+##     - /var/db/scripts/jet/salt-junos call --local status.vmstats
+##     - /var/db/scripts/jet/salt-junos call --local status.cpustats
+##     - /var/db/scripts/jet/salt-junos call --local status.loadavg
+##     - /var/db/scripts/jet/salt-junos call --local test.ping
+##
+##   rules:
+##     - if: "$CI_COMMIT_TAG != null && $CI_PROJECT_PATH == $CICD_UPSTREAM_PATH"
+##       when: always
+##     - when: never

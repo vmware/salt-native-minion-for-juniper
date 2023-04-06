@@ -1,0 +1,50 @@
+# Copyright 2019-2022 VMware, Inc.
+# SPDX-License-Identifier: Apache-2
+
+Cython==0.29.21
+### psutil
+ptpython
+### pycparser<2.18
+
+## picking specific versions of deps for Salt which issues >=2.18
+pycparser==2.17
+jinja2==2.10.1
+packaging
+wheel
+markupsafe==1.1.1
+pycryptodomex==3.14.1
+
+## cffi v1.14.4 and higher had gcc pragma inside a function which
+## gcc v4.2 cannot handle - upgrading gcc to v7.3.0 leads to issues with openssl
+## also cryptography above 3.1.1 have deprecated openssl 1.0.2,
+## and FreeBSD 10.2 openssl v1.0.1 - hence work-arounds
+# setting working version of cffi
+cffi==1.14.3
+
+## bcrypt
+git+https://github.com/dmurphy18/bcrypt@fix_cffi_junos_bld#egg=bcrypt
+
+## PyNaCl
+git+https://github.com/dmurphy18/pynacl@fix_cffi_junos_bld#egg=pynacl
+
+## cryptography==3.1.1
+git+https://github.com/dmurphy18/cryptography@sign-conversion-2.6.1#egg=cryptography
+
+jsnapy
+jxmlease
+
+## git+https://github.com/dmurphy18/py-junos-eznc@dgm_junos-eznc-250-patch#egg=junos-eznc
+## junos-eznc v2.5.4 contains the patch
+junos-eznc==2.5.4
+
+SALT_LOCATION
+
+#paramiko
+ncclient
+
+# napalm
+#jxmlease
+## gssapi
+
+remote-pdb
+setproctitle

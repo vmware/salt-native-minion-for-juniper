@@ -1,0 +1,77 @@
+/*  Copyright 2019-2022 VMware, Inc.
+*   SPDX-License-Identifier: Apache-2
+*/
+
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+match / {
+    <op-script-results> {
+        var $package = jcs:invoke("get-software-information");
+        if($package/package-information[name == "salt-junos"])
+        {
+            expr jcs:trace("The salt-junos package is available");
+            if ($junos-context/routing-engine-name == 're0'){
+                expr jcs:trace("copying scripts from master to re1");
+                var $rpc-fc-commit = {
+                       <file-copy> {
+                         <source> '/var/db/scripts/commit/salt.slax';
+                         <destination> 're1:/var/db/scripts/commit/salt.slax';
+                    }
+                }
+                expr jcs:invoke($rpc-fc-commit);
+
+                var $rpc-fc-event = {
+                       <file-copy> {
+                         <source> '/var/db/scripts/event/salt_event.py';
+                         <destination> 're1:/var/db/scripts/event/salt_event.py';
+                    }
+                }
+                expr jcs:invoke($rpc-fc-event);
+
+                var $rpc-fc-op = {
+                       <file-copy> {
+                         <source> '/var/db/scripts/op/salt_dualrengine.slax';
+                         <destination> 're1:/var/db/scripts/op/salt_dualrengine.slax';
+                    }
+                }
+                expr jcs:invoke($rpc-fc-op);
+            }
+            else if($junos-context/routing-engine-name == 're1'){
+                expr jcs:trace("copying scripts from master to re1");
+                var $rpc-fc-commit = {
+                       <file-copy> {
+                         <source> '/var/db/scripts/commit/salt.slax';
+                         <destination> 're0:/var/db/scripts/commit/salt.slax';
+                    }
+                }
+                expr jcs:invoke($rpc-fc-commit);
+
+                var $rpc-fc-event = {
+                       <file-copy> {
+                         <source> '/var/db/scripts/event/salt_event.py';
+                         <destination> 're0:/var/db/scripts/event/salt_event.py';
+                    }
+                }
+                expr jcs:invoke($rpc-fc-event);
+
+                var $rpc-fc-op = {
+                       <file-copy> {
+                         <source> '/var/db/scripts/op/salt_dualrengine.slax';
+                         <destination> 're0:/var/db/scripts/op/salt_dualrengine.slax';
+                    }
+                }
+                expr jcs:invoke($rpc-fc-op);
+            }
+            else {
+                expr jcs:trace("single routing engine");
+           }
+       }
+       else {
+           expr jcs:trace("unable to find salt-junos");
+       }
+    }
+}
