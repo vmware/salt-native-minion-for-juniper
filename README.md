@@ -316,11 +316,14 @@ Steps:
 Salt support on Juniper is a community-run project and open to all contributions
 The salt-native-minion-for-juniper project team welcomes contributions from the
 community. Before you start working with salt-native-minion-for-juniper, please
-read our [Developer Certificate of Origin](https://cla.vmware.com/dco).
+read and sign our Contributor License Agreement CLA. If you wish to contribute
+code and you have not signed our Contributor License Agreement (CLA), our bot
+will prompt you to do so when you open a Pull Request. For any questions about
+the CLA process, please refer to our FAQ.
 All contributions to this repository must be signed as described on that page.
 Your signature certifies that you wrote the patch or have the right to pass it
 on as an open-source patch. For more detailed information,
-refer to [CONTRIBUTING.md](CONTRIBUTING.md).
+refer to [CONTRIBUTING_CLA.md](CONTRIBUTING_CLA.md).
 
 The regular Open Source methods of contributing to a project apply:
 
