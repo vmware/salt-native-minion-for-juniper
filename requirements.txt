@@ -37,7 +37,7 @@ jxmlease
 ## junos-eznc v2.5.4 contains the patch
 junos-eznc==2.5.4
 
-SALT_LOCATION
+# uncomment before use SALT_LOCATION
 
 #paramiko
 ncclient
